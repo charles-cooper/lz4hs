@@ -31,7 +31,7 @@ foreign import ccall
 foreign import ccall
   "LZ4F_decompress"
   c_LZ4F_decompress
-  :: Ptr Context -> Ptr CChar -> Ptr CSize -> Ptr CChar -> Ptr CSize -> Ptr Options -> IO CSize
+  :: Context -> Ptr CChar -> Ptr CSize -> Ptr CChar -> Ptr CSize -> Ptr Options -> IO CSize
 
 foreign import ccall
   "LZ4F_isError"
@@ -59,11 +59,9 @@ createCtx = do
   -- typedef struct LZ4F_dctx_s* LZ4F_decompressionContext_t;
   ctx <- mallocForeignPtrBytes (sizeOf (undefined :: CIntPtr))
   addForeignPtrFinalizer c_wrap_free_dctx ctx
-  printCtx ctx
 
   tryLZ4 "Create lz4 context"
     $ withForeignPtr ctx (flip c_LZ4F_createDecompressionContext version)
-  printCtx ctx
   return ctx
 
 printCtx :: ForeignPtr Context -> IO ()
@@ -71,24 +69,21 @@ printCtx ctx = do
   withForeignPtr ctx $ \ctx -> do
     print $ "Context: " ++ show ctx
     c_print_ptr ctx
-    -- with ctx $ \derefed -> print derefed
 
 type LZ4Magic = CInt
 szMagic = sizeOf (undefined :: LZ4Magic)
 decompressInit :: Lazy.ByteString -> IO (ForeignPtr Context, Lazy.ByteString)
 decompressInit input = do
   ctx <- createCtx
-  putStrLn "Context created"
-  let magic = Lazy.toStrict $ Lazy.take (int 100) input
-  printCtx ctx
+  -- putStrLn "Context created"
+  let magic = Lazy.toStrict $ Lazy.take (int szMagic) input
   (szHdr, _) <- decompressChunk magic ctx
-  printCtx ctx
-  putStr "Read magic. "
-  putStrLn $ "szHdr: " ++ show szHdr
+  -- putStr "Read magic. "
+  -- putStrLn $ "szHdr: " ++ show szHdr
   let hdr = Lazy.toStrict $ Lazy.take (int szHdr) $ Lazy.drop (int szMagic) input
   (hdrBytes, _) <- decompressChunk hdr ctx
-  putStrLn $ "hdrBytes: " ++ show hdrBytes
-  return (ctx, Lazy.drop (int $ szHdr ) input)
+  -- putStrLn $ "hdrBytes: " ++ show hdrBytes
+  return (ctx, Lazy.drop (int $ int hdrBytes + szMagic) input)
 
 decompress :: Lazy.ByteString -> Lazy.ByteString
 decompress inp = unsafePerformIO $ do
@@ -108,14 +103,18 @@ decompressChunk inp ctx = do
         let out = Strict.replicate defaultChunkSize 0
         szout <- unsafeUseAsCStringLen out $ \(out, _lenOut) -> do
           withForeignPtr ctx $ \ctx -> do
+            derefCtx <- peek ctx
+            -- print $ "Decompress chunk"
             tryLZ4 "Decompress continue"
               $ c_LZ4F_decompress
-                  ctx
+                  derefCtx
                   out
                   lenOut
                   srcPtr
                   lenInp
                   nullPtr{-options-}
+        -- print $ "Decompressed " ++ show szout ++ " bytes"
+        print $ Strict.take (int szout) out
         return (int szout, Strict.take (int szout) out)
 
 -- tries an action, returning the result if it is not an error

@@ -1,5 +1,5 @@
 #include <stdio.h>
-void wrap_free_dctx(/*LZ4F_decompressionContext*/char *dctx) {
+void wrap_free_dctx(/*LZ4F_decompressionContext*/void **dctx) {
   LZ4F_freeDecompressionContext(*dctx);
 }
 void print_ptr(void **p) {
