@@ -11,7 +11,6 @@ import Data.ByteString.Unsafe
 
 type LZ4FErrorCode = CSize
 
--- typedef struct LZ4F_dctx_s* LZ4F_decompressionContext_t;   /* must be aligned on 8-bytes */
 foreign import ccall
   "LZ4F_createDecompressionContext"
   c_LZ4F_createDecompressionContext
@@ -21,6 +20,11 @@ foreign import ccall
   "LZ4F_freeDecompressionContext"
   c_LZ4F_freeDecompressionContext
   :: Context -> IO LZ4FErrorCode
+
+foreign import ccall
+  "&wrap_free_dctx"
+  c_wrap_free_dctx
+  :: FunPtr (Ptr Context -> IO ())
 
 foreign import ccall
   "LZ4F_decompress"
@@ -43,9 +47,11 @@ data Options
 
 createCtx :: IO (ForeignPtr Context)
 createCtx = do
+  -- decompressioncontext is ptr to opaque struct
+  -- typedef struct LZ4F_dctx_s* LZ4F_decompressionContext_t;
   ctx <- mallocBytes (sizeOf (undefined :: CIntPtr))
   c_LZ4F_createDecompressionContext ctx
-  newForeignPtr (c_LZ4F_freeDecompressionContext) ctx
+  newForeignPtr (c_wrap_free_dctx) ctx
 
 decompressInit :: Lazy.ByteString -> IO (ForeignPtr Context, Lazy.ByteString)
 decompressInit = undefined -- TODO
@@ -60,14 +66,16 @@ int :: (Integral a, Integral b) => a -> b
 int = fromIntegral
 decompressChunk :: CStringLen -> ForeignPtr Context -> IO (Word64, Strict.ByteString)
 decompressChunk (inp, len) ctx = do
-  with len $ \lenInp -> do
-    with Lazy.defaultChunkSize $ \lenOut -> do
+  with (int len) $ \lenInp -> do
+    with (int Lazy.defaultChunkSize) $ \lenOut -> do
       let out = Strict.replicate defaultChunkSize 0
       szout <- unsafeUseAsCStringLen out $ \(out, _lenOut) -> do
         withForeignPtr ctx $ \ctx -> do
-          tryLZ4 $ c_LZ4F_decompress ctx inp (int lenInp) out (int lenOut) nullPtr{-options-}
+          tryLZ4 $ c_LZ4F_decompress ctx inp lenInp out lenOut nullPtr{-options-}
       return (int szout, Strict.take (int szout) out)
 
+-- tries an action, returning the result if it is not an error
+-- and throwing an IO exception if it is an error
 tryLZ4 :: IO CSize -> IO CSize
 tryLZ4 action = do
   out <- action
@@ -86,4 +94,6 @@ decompressContinue inp ctx = case inp of
       rest <- decompressContinue (Lazy.drop (int bytesRead) inp) ctx
       return $ Lazy.Chunk chunk rest
 
-main = return ()
+main = do
+  input <- Lazy.getContents
+  Lazy.putStr $ decompress input
