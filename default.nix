@@ -2,8 +2,10 @@
 
 let
   haskellEnv = haskellngPackages.ghcWithPackages (p: with p; [
+    hex
   ]);
   env = (with pkgs; [
+    gdb
   ]);
 in
   stdenv.mkDerivation {
