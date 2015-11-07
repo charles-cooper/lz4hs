@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+module LZ4 (decompress, main) where
 import Control.Monad
 import Data.Hex
 import Foreign
@@ -57,7 +57,7 @@ createCtx :: IO (ForeignPtr Context)
 createCtx = do
   -- decompressioncontext is ptr to opaque struct:
   -- typedef struct LZ4F_dctx_s* LZ4F_decompressionContext_t;
-  ctx <- mallocForeignPtrBytes (sizeOf (undefined :: CIntPtr))
+  ctx <- mallocForeignPtrBytes (sizeOf (undefined :: Ptr LZ4Dctx))
   addForeignPtrFinalizer c_wrap_free_dctx ctx
 
   tryLZ4 "Create lz4 context"
@@ -65,9 +65,7 @@ createCtx = do
   return ctx
 
 decompress :: Lazy.ByteString -> Lazy.ByteString
-decompress input = unsafePerformIO $ do
-  ctx <- createCtx
-  decompressContinue input ctx
+decompress input = unsafePerformIO $ decompressContinue input <$> createCtx
 
 defaultChunkSize = Lazy.defaultChunkSize
 int :: (Integral a, Integral b) => a -> b
@@ -110,17 +108,19 @@ tryLZ4 userMsg action = do
       >>= (\msg -> throwIO . userError $ prependUserMsg msg)
   else return out
 
-decompressContinue :: Lazy.ByteString -> ForeignPtr Context -> IO Lazy.ByteString
-decompressContinue inp ctx = case inp of
-  Lazy.Empty       -> return Lazy.empty
-  Lazy.Chunk b bs  -> do
+decompressContinue :: Lazy.ByteString -> ForeignPtr Context -> Lazy.ByteString
+decompressContinue input ctx = case input of
+  Lazy.Empty       -> Lazy.empty
+  Lazy.Chunk b bs  -> unsafePerformIO $ do
     (bytesRead, chunk) <- decompressChunk b ctx
-    rest <- decompressContinue (Lazy.drop (int bytesRead) inp) ctx
+    let rest = decompressContinue (Lazy.drop (int bytesRead) input) ctx
+    -- TODO filter empty chunks if any
     return $ Lazy.Chunk chunk rest
 
 main = do
   input <- Lazy.getContents
   let decompressed = decompress input
   -- print $ Lazy.length input
-  print $ Lazy.length decompressed
+  -- print $ Lazy.length decompressed
+  -- Lazy.putStr $ input
   Lazy.putStr $ decompressed

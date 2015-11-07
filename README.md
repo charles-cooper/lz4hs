@@ -3,4 +3,4 @@ This exposes the streaming version of the LZ4 API in a Haskell interface. There 
 
 lz4 r131
 
-Still very much a work in progress. `decompress` is implemented but not yet lazily. `compress` is in the works.
+Still very much a work in progress. `decompress` is implemented, `compress` is in the works.
