@@ -65,14 +65,15 @@ createCtx = do
   return ctx
 
 printCtx :: ForeignPtr Context -> IO ()
-printCtx ctx = do
+printCtx ctx = undefined {-do
   withForeignPtr ctx $ \ctx -> do
     print $ "Context: " ++ show ctx
     c_print_ptr ctx
+-}
 
 type LZ4Magic = CInt
 szMagic = sizeOf (undefined :: LZ4Magic)
-decompressInit :: Lazy.ByteString -> IO (ForeignPtr Context, Lazy.ByteString)
+decompressInit :: Lazy.ByteString -> IO (ForeignPtr Context, Lazy.ByteString, Strict.ByteString)
 decompressInit input = do
   ctx <- createCtx
   -- putStrLn "Context created"
@@ -81,14 +82,15 @@ decompressInit input = do
   -- putStr "Read magic. "
   -- putStrLn $ "szHdr: " ++ show szHdr
   let hdr = Lazy.toStrict $ Lazy.take (int szHdr) $ Lazy.drop (int szMagic) input
-  (hdrBytes, _) <- decompressChunk hdr ctx
+  (hdrBytes, out) <- decompressChunk hdr ctx
   -- putStrLn $ "hdrBytes: " ++ show hdrBytes
-  return (ctx, Lazy.drop (int $ int hdrBytes + szMagic) input)
+  return (ctx, Lazy.drop (int $ int hdrBytes + szMagic) input, out)
 
 decompress :: Lazy.ByteString -> Lazy.ByteString
 decompress inp = unsafePerformIO $ do
-  (ctx, input) <- decompressInit inp
-  decompressContinue input ctx
+  (ctx, input, first) <- decompressInit inp
+  Lazy.chunk first <$> decompressContinue input ctx
+  -- return $ Lazy.chunk first rest
 
 defaultChunkSize = Lazy.defaultChunkSize
 int :: (Integral a, Integral b) => a -> b
@@ -100,22 +102,23 @@ decompressChunk inp ctx = do
   unsafeUseAsCStringLen inp $ \(srcPtr, len) -> do
     with (int len) $ \lenInp -> do
       with (int Lazy.defaultChunkSize) $ \lenOut -> do
-        let out = Strict.replicate defaultChunkSize 0
-        szout <- unsafeUseAsCStringLen out $ \(out, _lenOut) -> do
-          withForeignPtr ctx $ \ctx -> do
+        withForeignPtr ctx $ \ctx -> do
+          let out = Strict.replicate defaultChunkSize 0
+          szout <- unsafeUseAsCStringLen out $ \(outPtr, _lenOut) -> do
             derefCtx <- peek ctx
-            -- print $ "Decompress chunk"
-            tryLZ4 "Decompress continue"
+            -- LZ4F_decompress returns a hint as to next input buffer size, which we ignore
+            _ <- tryLZ4 "Decompress continue"
               $ c_LZ4F_decompress
                   derefCtx
-                  out
+                  outPtr
                   lenOut
                   srcPtr
                   lenInp
                   nullPtr{-options-}
-        -- print $ "Decompressed " ++ show szout ++ " bytes"
-        print $ Strict.take (int szout) out
-        return (int szout, Strict.take (int szout) out)
+            peek lenOut
+          -- print $ "Decompressed " ++ show szout ++ " bytes"
+          -- print $ Strict.take (int szout) out
+          return (int szout, Strict.take (int szout) out)
 
 -- tries an action, returning the result if it is not an error
 -- and throwing an IO exception if it is an error
@@ -139,4 +142,7 @@ decompressContinue inp ctx = case inp of
 
 main = do
   input <- Lazy.getContents
-  Lazy.putStr $ decompress input
+  let decompressed = decompress input
+  -- print $ Lazy.length input
+  -- print $ Lazy.length decompressed
+  Lazy.putStr $ decompressed
