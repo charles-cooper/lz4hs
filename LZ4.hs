@@ -51,7 +51,7 @@ data LZ4Dctx
 type Context = Ptr LZ4Dctx
 data Options
 
-version = 100
+version = 100 -- lz4frame.h:158
 
 createCtx :: IO (ForeignPtr Context)
 createCtx = do
@@ -64,37 +64,15 @@ createCtx = do
     $ withForeignPtr ctx (flip c_LZ4F_createDecompressionContext version)
   return ctx
 
-printCtx :: ForeignPtr Context -> IO ()
-printCtx ctx = undefined {-do
-  withForeignPtr ctx $ \ctx -> do
-    print $ "Context: " ++ show ctx
-    c_print_ptr ctx
--}
-
-type LZ4Magic = CInt
-szMagic = sizeOf (undefined :: LZ4Magic)
-decompressInit :: Lazy.ByteString -> IO (ForeignPtr Context, Lazy.ByteString, Strict.ByteString)
-decompressInit input = do
-  ctx <- createCtx
-  -- putStrLn "Context created"
-  let magic = Lazy.toStrict $ Lazy.take (int szMagic) input
-  (szHdr, _) <- decompressChunk magic ctx
-  -- putStr "Read magic. "
-  -- putStrLn $ "szHdr: " ++ show szHdr
-  let hdr = Lazy.toStrict $ Lazy.take (int szHdr) $ Lazy.drop (int szMagic) input
-  (hdrBytes, out) <- decompressChunk hdr ctx
-  -- putStrLn $ "hdrBytes: " ++ show hdrBytes
-  return (ctx, Lazy.drop (int $ int hdrBytes + szMagic) input, out)
-
 decompress :: Lazy.ByteString -> Lazy.ByteString
-decompress inp = unsafePerformIO $ do
-  (ctx, input, first) <- decompressInit inp
-  Lazy.chunk first <$> decompressContinue input ctx
-  -- return $ Lazy.chunk first rest
+decompress input = unsafePerformIO $ do
+  ctx <- createCtx
+  decompressContinue input ctx
 
 defaultChunkSize = Lazy.defaultChunkSize
 int :: (Integral a, Integral b) => a -> b
 int = fromIntegral
+
 -- takes compressed chunk and opaque context as input
 -- returns (number of bytes read, decompressed bytes)
 decompressChunk :: Strict.ByteString -> ForeignPtr Context -> IO (Word64, Strict.ByteString)
@@ -129,7 +107,7 @@ tryLZ4 userMsg action = do
   if toBool . c_LZ4F_isError $ out then
     c_LZ4F_getErrorName (int out)
       >>= peekCString
-      >>= (\msg -> throwIO . userError $ userMsg ++ " -- " ++ msg)
+      >>= (\msg -> throwIO . userError $ prependUserMsg msg)
   else return out
 
 decompressContinue :: Lazy.ByteString -> ForeignPtr Context -> IO Lazy.ByteString
@@ -144,5 +122,5 @@ main = do
   input <- Lazy.getContents
   let decompressed = decompress input
   -- print $ Lazy.length input
-  -- print $ Lazy.length decompressed
+  print $ Lazy.length decompressed
   Lazy.putStr $ decompressed
