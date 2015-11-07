@@ -82,7 +82,7 @@ decompressChunk inp ctx = do
       with (int Lazy.defaultChunkSize) $ \lenOut -> do
         withForeignPtr ctx $ \ctx -> do
           let out = Strict.replicate defaultChunkSize 0
-          szout <- unsafeUseAsCStringLen out $ \(outPtr, _lenOut) -> do
+          (szout, bytesRead) <- unsafeUseAsCStringLen out $ \(outPtr, _lenOut) -> do
             derefCtx <- peek ctx
             -- LZ4F_decompress returns a hint as to next input buffer size, which we ignore
             _ <- tryLZ4 "Decompress continue"
@@ -93,10 +93,10 @@ decompressChunk inp ctx = do
                   srcPtr
                   lenInp
                   nullPtr{-options-}
-            peek lenOut
+            (,) <$> peek lenOut <*> peek lenInp
           -- print $ "Decompressed " ++ show szout ++ " bytes"
           -- print $ Strict.take (int szout) out
-          return (int szout, Strict.take (int szout) out)
+          return (int bytesRead, Strict.take (int szout) out)
 
 -- tries an action, returning the result if it is not an error
 -- and throwing an IO exception if it is an error
