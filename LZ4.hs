@@ -1,10 +1,7 @@
-module LZ4
-  ( decompress
-  , main)
+module LZ4 ( decompress )
 where
 
 import Control.Monad
-import Data.Hex
 import Foreign
 import Foreign.C
 import System.IO.Unsafe
@@ -17,45 +14,41 @@ import Data.ByteString.Unsafe
 
 type LZ4FErrorCode = CSize
 
-foreign import ccall
+foreign import ccall unsafe
   "LZ4F_createDecompressionContext"
   c_LZ4F_createDecompressionContext
   :: Ptr Context -> CUInt -> IO LZ4FErrorCode
 
-foreign import ccall
+foreign import ccall unsafe
   "LZ4F_freeDecompressionContext"
   c_LZ4F_freeDecompressionContext
   :: Context -> IO LZ4FErrorCode
 
-foreign import ccall
+foreign import ccall unsafe
   "&wrap_free_dctx"
   c_wrap_free_dctx
   :: FunPtr (Ptr Context -> IO ())
 
-foreign import ccall
+foreign import ccall unsafe
   "LZ4F_decompress"
   c_LZ4F_decompress
-  :: Context
-  -> Ptr CChar
-  -> Ptr CSize
-  -> Ptr CChar
-  -> Ptr CSize
-  -> Ptr Options
-  -> IO CSize
+  :: Context      -- lz4 internal state
+  -> Ptr CChar    -- src buffer
+  -> Ptr CSize    -- src buffer len
+  -> Ptr CChar    -- dst buffer
+  -> Ptr CSize    -- dst buffer len
+  -> Ptr Options  -- options, null indicates none
+  -> IO CSize     -- hint as to size of next chunk
 
-foreign import ccall
+foreign import ccall unsafe
   "LZ4F_isError"
   c_LZ4F_isError
   :: CSize -> CUInt
 
-foreign import ccall
+foreign import ccall unsafe
   "LZ4F_getErrorName"
   c_LZ4F_getErrorName
   :: CSize -> IO CString
-foreign import ccall
-  "print_ptr"
-  c_print_ptr
-  :: Ptr a -> IO ()
 
 data LZ4Dctx
 type Context = Ptr LZ4Dctx
@@ -83,15 +76,14 @@ tryLZ4 userMsg action = do
 
 createCtx :: IO (ForeignPtr Context)
 createCtx = do
-
   -- decompressioncontext is ptr to opaque struct:
   -- typedef struct LZ4F_dctx_s* LZ4F_decompressionContext_t;
   ctx <- mallocForeignPtrBytes (sizeOf (undefined :: Ptr LZ4Dctx))
 
   addForeignPtrFinalizer c_wrap_free_dctx ctx
 
-  tryLZ4 "LZ4.createCtx" $
-    withForeignPtr ctx (flip c_LZ4F_createDecompressionContext lz4Version)
+  tryLZ4 "LZ4.createCtx"
+    $ withForeignPtr ctx (flip c_LZ4F_createDecompressionContext lz4Version)
 
   return ctx
 
@@ -101,8 +93,8 @@ createCtx = do
 -- ByteString in memory to check the entire stream for corruption,
 -- which is not appropriate for large operations
 decompress :: Lazy.ByteString -> Lazy.ByteString
-decompress input = unsafePerformIO $
-  decompressContinue <$> createCtx <*> pure input
+decompress input =
+  decompressContinue (unsafePerformIO createCtx) input
 
 decompressContinue :: ForeignPtr Context -> Lazy.ByteString -> Lazy.ByteString
 decompressContinue ctx input = case input of
@@ -117,11 +109,6 @@ decompressContinue ctx input = case input of
     rest = decompressContinue ctx
       (Lazy.drop (int bytesRead) input)
 
-    {- TODO filter out zero-length chunks if necessary
-     - if Strict.length chunk > 0
-     -    then Lazy.Chunk chunk rest
-     -    else rest
-     -}
     in Lazy.Chunk chunk rest
 
 -- Takes compressed chunk and opaque context as input.
@@ -133,41 +120,24 @@ decompressChunk
   -> IO (Word64, Strict.ByteString)
 decompressChunk ctx inp = do
 
-  unsafeUseAsCStringLen inp $ \(srcPtr, len) -> do
+  -- TODO figure out how to allocate without zeroing the whole chunk
+  let out = Strict.replicate defaultChunkSize 0
 
-    with (int len) $ \lenInp -> do
+  withForeignPtr ctx         $ \ctx              -> do
+  unsafeUseAsCStringLen inp  $ \(srcPtr, lenInp) -> do
+  with (int lenInp)          $ \lenInp           -> do
+  unsafeUseAsCStringLen out  $ \(outPtr, lenOut) -> do
+  with (int lenOut)          $ \lenOut           -> do
 
-      with (int Lazy.defaultChunkSize) $ \lenOut -> do
+    derefCtx <- peek ctx
 
-        withForeignPtr ctx $ \ctx -> do
+    let optsPtr = nullPtr
+    tryLZ4 "LZ4.decompressChunk"
+      $ c_LZ4F_decompress derefCtx outPtr lenOut srcPtr lenInp optsPtr
 
-          -- TODO figure out how to allocate without zeroing the whole chunk
-          let out = Strict.replicate defaultChunkSize 0
+    -- c_LZ4F_decompress modifies the len pointers in place
+    -- to tell us how much was read and written
+    szWr <- peek lenOut
+    szRd <- peek lenInp
 
-          unsafeUseAsCStringLen out $ \(outPtr, _lenOut) -> do
-            derefCtx <- peek ctx
-            -- LZ4F_decompress returns a hint as to next input buffer size
-            --
-            -- which we ignore.
-            tryLZ4 "LZ4.decompressChunk"
-              $ c_LZ4F_decompress
-                  derefCtx
-                  outPtr
-                  lenOut
-                  srcPtr
-                  lenInp
-                  nullPtr{-options-}
-
-          -- LZ4F_decompress modifies the len pointers in place
-          -- to tell us how much was read and how much was written
-          szWr <- peek lenOut
-          szRd <- peek lenInp
-
-          return (int szRd, Strict.take (int szWr) out)
-
-main = do
-  -- input <- Lazy.getContents
-  -- print $ Lazy.length input
-  -- print $ Lazy.length decompressed
-  -- Lazy.putStr $ input
-  Lazy.getContents >>= (Lazy.putStr . decompress)
+    return (int szRd, Strict.take (int szWr) out)
