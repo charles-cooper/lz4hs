@@ -1,0 +1,3 @@
+#!/bin/sh
+ ghc -main-is LZ4 -O2 LZ4.hs wrapper.o liblz4.a 
+

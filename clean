@@ -1,0 +1,2 @@
+#!/bin/sh
+rm LZ4 *.o *.hi
