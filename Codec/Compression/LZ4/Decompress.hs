@@ -1,4 +1,5 @@
-module LZ4 ( decompress )
+module Codec.Compression.LZ4.Decompress
+( decompress )
 where
 
 import Control.Monad
@@ -72,7 +73,6 @@ tryLZ4 userMsg action = do
   else c_LZ4F_getErrorName (int ret)
     >>= peekCString
     >>= (\msg -> throwIO . userError $ userMsg ++ " -- " ++ msg)
-
 
 createCtx :: IO (ForeignPtr Context)
 createCtx = do

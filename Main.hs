@@ -1,4 +1,4 @@
-import LZ4
+import Codec.Compression.LZ4.Decompress
 import qualified Data.ByteString.Lazy as Lazy
 andThen :: (a -> b) -> (b -> c) -> a -> c
 f `andThen` g = g . f

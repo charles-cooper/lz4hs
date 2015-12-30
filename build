@@ -1,3 +1,3 @@
 #!/bin/sh
 gcc -O2 -c wrapper.c
-ghc -O2 Test.hs LZ4.hs wrapper.o liblz4.a
+ghc -O2 Main.hs Codec/Compression/LZ4/Decompress.hs wrapper.o liblz4.a
