@@ -1,7 +1,8 @@
-{ stdenv, haskellngPackages, pkgs, profiling ? false}:
+{ stdenv, haskellPackages, pkgs, profiling ? false}:
 
 let
-  haskellEnv = haskellngPackages.ghcWithPackages (p: with p; [
+  haskellEnv = haskellPackages.ghcWithPackages (p: with p; [
+    cabal-install
     hex
   ]);
   env = (with pkgs; [
